@@ -4,13 +4,15 @@ import { supabase } from "@/integrations/supabase/client";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
-import { ArrowLeft, Minus, Plus, Save, Trash2, AlertTriangle, Pencil } from "lucide-react";
+import { ArrowLeft, Minus, Plus, Trash2, AlertTriangle, Pencil, Layers, Plus as PlusIcon } from "lucide-react";
 import { type Category } from "@/lib/constants";
 import { toast } from "sonner";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from "@/components/ui/alert-dialog";
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { Label } from "@/components/ui/label";
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { useMonthYear } from "@/contexts/MonthYearContext";
 
 export const Route = createFileRoute("/$location/models/$id")({
@@ -51,7 +53,7 @@ function ModelDetail() {
   };
   useEffect(() => { load(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [id, year, month, loc]);
 
-  const persist = async (stock: Stock, newQty: number): Promise<void> => {
+  const persist = async (stock: Stock, newQty: number, note?: string): Promise<void> => {
     if (newQty < 0) return;
     const previous = stock.quantity;
     const { error } = await supabase.from("monthly_stock" as any).update({ quantity: newQty, updated_at: new Date().toISOString() }).eq("id", stock.id);
@@ -65,6 +67,7 @@ function ModelDetail() {
       user_id: null,
       location: loc as any,
       year, month,
+      note: note && note.trim() ? note.trim() : null,
     } as any);
     setStocks((prev) => prev.map((p) => (p.id === stock.id ? { ...p, quantity: newQty } : p)));
   };
@@ -119,12 +122,13 @@ function ModelDetail() {
             Total stock for {label}: <span className="font-semibold text-foreground">{totalStock}</span> pieces
           </p>
         </div>
-        <div className="flex gap-2">
+        <div className="flex flex-wrap gap-2">
           <EditModelDialog model={model} onSaved={setModel} />
+          <ManageGlassTypesDialog modelId={id} loc={loc} year={year} month={month} onChanged={load} />
           <AlertDialog>
             <AlertDialogTrigger asChild>
               <Button variant="destructive" size="sm" className="gap-2">
-                <Trash2 className="h-4 w-4" /> Delete
+                <Trash2 className="h-4 w-4" /> Delete Model
               </Button>
             </AlertDialogTrigger>
             <AlertDialogContent>
@@ -143,28 +147,61 @@ function ModelDetail() {
         </div>
       </div>
 
-      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
-        {stocks.map((s) => (
-          <StockCard key={s.id} label={s.glass_type} stock={s} onSave={persist} />
-        ))}
-      </div>
+      {stocks.length === 0 ? (
+        <Card>
+          <CardContent className="py-10 text-center text-sm text-muted-foreground">
+            No glass types yet. Click <span className="font-medium text-foreground">Manage Glass Types</span> to add one.
+          </CardContent>
+        </Card>
+      ) : (
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
+          {stocks.map((s) => (
+            <StockCard key={s.id} label={s.glass_type} stock={s} modelId={id} loc={loc} year={year} month={month} onSave={persist} />
+          ))}
+        </div>
+      )}
     </div>
   );
 }
 
-function StockCard({ label, stock, onSave }: { label: string; stock: Stock; onSave: (s: Stock, n: number) => Promise<void> | void }) {
+function StockCard({
+  label, stock, modelId, loc, year, month, onSave,
+}: {
+  label: string; stock: Stock; modelId: string; loc: "TVM" | "DPI"; year: number; month: number;
+  onSave: (s: Stock, n: number, note?: string) => Promise<void> | void;
+}) {
   const [val, setVal] = useState(String(stock.quantity));
+  const [note, setNote] = useState("");
   useEffect(() => setVal(String(stock.quantity)), [stock.quantity]);
+
+  const loadLastNote = async () => {
+    const { data } = await supabase
+      .from("stock_history")
+      .select("note")
+      .eq("vehicle_model_id", modelId)
+      .eq("glass_type", stock.glass_type as any)
+      .eq("location", loc as any)
+      .eq("year", year)
+      .eq("month", month)
+      .order("created_at", { ascending: false })
+      .limit(1);
+    const row = (data as any[])?.[0];
+    setNote(row?.note ?? "");
+  };
+  useEffect(() => { loadLastNote(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [stock.id, year, month, loc]);
 
   const isLow = stock.quantity < LOW_THRESHOLD;
   const isOut = stock.quantity === 0;
 
-  const save = async () => {
+  const commitQty = async () => {
     const n = parseInt(val, 10);
-    if (isNaN(n) || n < 0) return toast.error("Enter a valid number");
-    if (n === stock.quantity) return toast.message("No change");
-    await onSave(stock, n);
-    toast.success(`${label} updated`);
+    if (isNaN(n) || n < 0) { setVal(String(stock.quantity)); return; }
+    if (n === stock.quantity) return;
+    await onSave(stock, n, note);
+  };
+
+  const commitNote = async () => {
+    await onSave(stock, stock.quantity, note);
   };
 
   return (
@@ -197,15 +234,26 @@ function StockCard({ label, stock, onSave }: { label: string; stock: Stock; onSa
           </Button>
         </div>
 
-        <div className="mt-3 flex gap-2">
-          <Input
-            type="number" min={0} value={val}
-            onChange={(e) => setVal(e.target.value)}
-            className="h-11 text-center text-base font-semibold"
-          />
-          <Button variant="secondary" className="h-11 gap-2" onClick={save}>
-            <Save className="h-4 w-4" /> Save
-          </Button>
+        <div className="mt-4 space-y-3">
+          <div className="space-y-1.5">
+            <Label className="text-xs">Quantity</Label>
+            <Input
+              type="number" min={0} value={val}
+              onChange={(e) => setVal(e.target.value)}
+              onBlur={commitQty}
+              className="h-11 text-center text-base font-semibold"
+            />
+          </div>
+          <div className="space-y-1.5">
+            <Label className="text-xs">Description</Label>
+            <Textarea
+              value={note}
+              onChange={(e) => setNote(e.target.value)}
+              onBlur={commitNote}
+              placeholder="Enter remarks..."
+              rows={3}
+            />
+          </div>
         </div>
       </CardContent>
     </Card>
@@ -234,7 +282,7 @@ function EditModelDialog({ model, onSaved }: { model: Model; onSaved: (m: Model)
   return (
     <Dialog open={open} onOpenChange={setOpen}>
       <DialogTrigger asChild>
-        <Button variant="outline" size="sm" className="gap-2"><Pencil className="h-4 w-4" /> Edit</Button>
+        <Button variant="outline" size="sm" className="gap-2"><Pencil className="h-4 w-4" /> Edit Model</Button>
       </DialogTrigger>
       <DialogContent>
         <DialogHeader><DialogTitle>Edit Model</DialogTitle></DialogHeader>
@@ -247,6 +295,173 @@ function EditModelDialog({ model, onSaved }: { model: Model; onSaved: (m: Model)
           <Button variant="outline" onClick={() => setOpen(false)}>Cancel</Button>
           <Button onClick={save} disabled={busy}>{busy ? "Saving..." : "Save"}</Button>
         </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+type GlassRow = { glass_type: string; quantity: number };
+
+function ManageGlassTypesDialog({
+  modelId, loc, year, month, onChanged,
+}: { modelId: string; loc: "TVM" | "DPI"; year: number; month: number; onChanged: () => void | Promise<void> }) {
+  const [open, setOpen] = useState(false);
+  const [rows, setRows] = useState<GlassRow[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [addOpen, setAddOpen] = useState(false);
+  const [newName, setNewName] = useState("");
+  const [editing, setEditing] = useState<string | null>(null);
+  const [editName, setEditName] = useState("");
+  const [busy, setBusy] = useState(false);
+
+  const load = async () => {
+    setLoading(true);
+    const { data } = await supabase
+      .from("monthly_stock" as any)
+      .select("glass_type, quantity")
+      .eq("vehicle_model_id", modelId)
+      .eq("location", loc)
+      .eq("year", year)
+      .eq("month", month)
+      .order("glass_type");
+    setRows(((data as any[]) ?? []) as GlassRow[]);
+    setLoading(false);
+  };
+
+  useEffect(() => { if (open) load(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [open, modelId, loc, year, month]);
+
+  const refresh = async () => { await load(); await onChanged(); };
+
+  const addGlass = async () => {
+    const name = newName.trim();
+    if (!name) return toast.error("Glass type is required");
+    setBusy(true);
+    const { error: e1 } = await supabase.from("glass_stock").insert({ vehicle_model_id: modelId, glass_type: name as any, quantity: 0 });
+    if (e1) { setBusy(false); return toast.error(e1.message); }
+    const { error: e2 } = await supabase.from("monthly_stock" as any).insert({
+      vehicle_model_id: modelId, location: loc, glass_type: name, year, month, quantity: 0, opening_quantity: 0,
+    });
+    setBusy(false);
+    if (e2) return toast.error(e2.message);
+    toast.success("Glass type added");
+    setNewName(""); setAddOpen(false);
+    await refresh();
+  };
+
+  const saveEdit = async (oldName: string) => {
+    const name = editName.trim();
+    if (!name || name === oldName) { setEditing(null); return; }
+    setBusy(true);
+    const { error: e1 } = await supabase.from("glass_stock").update({ glass_type: name as any })
+      .eq("vehicle_model_id", modelId).eq("glass_type", oldName as any);
+    const { error: e2 } = await supabase.from("monthly_stock" as any).update({ glass_type: name })
+      .eq("vehicle_model_id", modelId).eq("glass_type", oldName);
+    setBusy(false);
+    if (e1 || e2) return toast.error((e1 ?? e2)!.message);
+    toast.success("Glass type updated");
+    setEditing(null);
+    await refresh();
+  };
+
+  const deleteGlass = async (name: string) => {
+    setBusy(true);
+    const { error: e1 } = await supabase.from("monthly_stock" as any)
+      .delete().eq("vehicle_model_id", modelId).eq("glass_type", name);
+    const { error: e2 } = await supabase.from("glass_stock")
+      .delete().eq("vehicle_model_id", modelId).eq("glass_type", name as any);
+    setBusy(false);
+    if (e1 || e2) return toast.error((e1 ?? e2)!.message);
+    toast.success("Glass type deleted");
+    await refresh();
+  };
+
+  return (
+    <Dialog open={open} onOpenChange={setOpen}>
+      <DialogTrigger asChild>
+        <Button variant="secondary" size="sm" className="gap-2"><Layers className="h-4 w-4" /> Manage Glass Types</Button>
+      </DialogTrigger>
+      <DialogContent className="max-w-2xl">
+        <DialogHeader>
+          <DialogTitle>Manage Glass Types</DialogTitle>
+        </DialogHeader>
+
+        <div className="flex justify-end">
+          <Dialog open={addOpen} onOpenChange={setAddOpen}>
+            <DialogTrigger asChild>
+              <Button size="sm" className="gap-2"><PlusIcon className="h-4 w-4" /> Add Glass Type</Button>
+            </DialogTrigger>
+            <DialogContent>
+              <DialogHeader><DialogTitle>Add Glass Type</DialogTitle></DialogHeader>
+              <div className="space-y-2">
+                <Label>Glass Type</Label>
+                <Input value={newName} onChange={(e) => setNewName(e.target.value)} placeholder="e.g. Windshield Green" />
+              </div>
+              <DialogFooter>
+                <Button variant="outline" onClick={() => setAddOpen(false)}>Cancel</Button>
+                <Button onClick={addGlass} disabled={busy}>{busy ? "Saving..." : "Save"}</Button>
+              </DialogFooter>
+            </DialogContent>
+          </Dialog>
+        </div>
+
+        <div className="rounded-md border">
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>Glass Type</TableHead>
+                <TableHead className="text-center">Current Stock</TableHead>
+                <TableHead className="w-[120px] text-right">Actions</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {loading ? (
+                <TableRow><TableCell colSpan={3} className="py-6 text-center text-sm text-muted-foreground">Loading...</TableCell></TableRow>
+              ) : rows.length === 0 ? (
+                <TableRow><TableCell colSpan={3} className="py-6 text-center text-sm text-muted-foreground">No glass types yet.</TableCell></TableRow>
+              ) : rows.map((r) => (
+                <TableRow key={r.glass_type}>
+                  <TableCell className="font-medium">{r.glass_type}</TableCell>
+                  <TableCell className="text-center">{r.quantity}</TableCell>
+                  <TableCell className="text-right">
+                    <div className="flex justify-end gap-1">
+                      <Dialog open={editing === r.glass_type} onOpenChange={(v) => { setEditing(v ? r.glass_type : null); if (v) setEditName(r.glass_type); }}>
+                        <DialogTrigger asChild>
+                          <Button variant="ghost" size="icon" className="h-8 w-8"><Pencil className="h-4 w-4" /></Button>
+                        </DialogTrigger>
+                        <DialogContent>
+                          <DialogHeader><DialogTitle>Edit Glass Type</DialogTitle></DialogHeader>
+                          <div className="space-y-2">
+                            <Label>Glass Type</Label>
+                            <Input value={editName} onChange={(e) => setEditName(e.target.value)} />
+                          </div>
+                          <DialogFooter>
+                            <Button variant="outline" onClick={() => setEditing(null)}>Cancel</Button>
+                            <Button onClick={() => saveEdit(r.glass_type)} disabled={busy}>{busy ? "Saving..." : "Save"}</Button>
+                          </DialogFooter>
+                        </DialogContent>
+                      </Dialog>
+                      <AlertDialog>
+                        <AlertDialogTrigger asChild>
+                          <Button variant="ghost" size="icon" className="h-8 w-8 text-destructive"><Trash2 className="h-4 w-4" /></Button>
+                        </AlertDialogTrigger>
+                        <AlertDialogContent>
+                          <AlertDialogHeader>
+                            <AlertDialogTitle>Delete Glass Type?</AlertDialogTitle>
+                            <AlertDialogDescription>Are you sure you want to delete this glass type?</AlertDialogDescription>
+                          </AlertDialogHeader>
+                          <AlertDialogFooter>
+                            <AlertDialogCancel>Cancel</AlertDialogCancel>
+                            <AlertDialogAction onClick={() => deleteGlass(r.glass_type)}>Delete</AlertDialogAction>
+                          </AlertDialogFooter>
+                        </AlertDialogContent>
+                      </AlertDialog>
+                    </div>
+                  </TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        </div>
       </DialogContent>
     </Dialog>
   );

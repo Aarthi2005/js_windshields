@@ -318,11 +318,24 @@ function AddModelDialog({
       .select("id, name, brand, category")
       .single();
     if (error || !data) { setBusy(false); return toast.error(error?.message ?? "Failed"); }
-    const glassTypes = [
-      "front_windshield","beeding","backlite_defogger","backlite_non_defogger",
-      "front_right_door","front_left_door","rear_right_door","rear_left_door",
-      "last_fix_rh","last_fix_lh",
-    ];
+    let glassTypes: string[];
+
+if (cat === "BUS") {
+  glassTypes = ["Toughened"];
+} else {
+  glassTypes = [
+    "front_windshield",
+    "beeding",
+    "backlite_defogger",
+    "backlite_non_defogger",
+    "front_right_door",
+    "front_left_door",
+    "rear_right_door",
+    "rear_left_door",
+    "last_fix_rh",
+    "last_fix_lh",
+  ];
+}
     await supabase.from("glass_stock").insert(glassTypes.map((g) => ({ vehicle_model_id: data.id, glass_type: g as any, quantity: 0 })));
     // Seed monthly_stock for the currently viewed month so the model has editable rows immediately.
     await ensureSnapshot(loc);
