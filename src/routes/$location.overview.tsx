@@ -157,7 +157,14 @@ function Overview() {
     XLSX.utils.book_append_sheet(wb, ws, `${loc} ${label}`);
     XLSX.writeFile(wb, `${loc}_inventory_${year}_${month}.xlsx`);
   };
-  const print = () => window.print();
+  const [printing, setPrinting] = useState(false);
+  const print = () => {
+    setPrinting(true);
+    setTimeout(() => {
+      window.print();
+      setPrinting(false);
+    }, 50);
+  };
 
   return (
     <div className="space-y-5">
@@ -228,9 +235,9 @@ function Overview() {
             <TableBody>
               {loading ? (
                 <TableRow><TableCell colSpan={5} className="py-10 text-center text-muted-foreground">Loading…</TableCell></TableRow>
-              ) : paged.length === 0 ? (
+              ) : (printing ? sorted : paged).length === 0 ? (
                 <TableRow><TableCell colSpan={5} className="py-10 text-center text-muted-foreground">No items match the filters</TableCell></TableRow>
-              ) : paged.map((r, i) => {
+              ) : (printing ? sorted : paged).map((r, i) => {
                 const out = r.quantity === 0;
                 const low = !out && r.quantity <= r.low_threshold;
                 return (
