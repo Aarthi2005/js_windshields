@@ -58,14 +58,34 @@ function ModelDetail() {
     const previous = stock.quantity;
     const { error } = await supabase.from("monthly_stock" as any).update({ quantity: newQty, updated_at: new Date().toISOString() }).eq("id", stock.id);
     if (error) { toast.error(error.message); return; }
-    await supabase.rpc("propagate_stock_change" as any, {
-  p_vehicle_model_id: id,
-  p_glass_type: stock.glass_type,
-  p_location: loc,
-  p_year: year,
-  p_month: month,
-  p_quantity: newQty,
+    const { data, error: rpcError } = await supabase.rpc(
+  "propagate_stock_change" as any,
+  {
+    p_vehicle_model_id: id,
+    p_glass_type: stock.glass_type,
+    p_location: loc,
+    p_year: year,
+    p_month: month,
+    p_quantity: newQty,
+  }
+);
+
+console.log("RPC RESULT:", data);
+console.log("RPC ERROR:", rpcError);
+
+console.log({
+  modelId: id,
+  glassType: stock.glass_type,
+  location: loc,
+  year,
+  month,
+  quantity: newQty,
 });
+
+if (rpcError) {
+  console.error(rpcError);
+  alert(rpcError.message);
+}
     await supabase.from("stock_history").insert({
       vehicle_model_id: id,
       glass_type: stock.glass_type as any,
